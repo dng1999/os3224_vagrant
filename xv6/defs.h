@@ -118,6 +118,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+//HW2 Edit
+int             wait_stat(int*, int*, int*, int*);
+void            updateTick(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

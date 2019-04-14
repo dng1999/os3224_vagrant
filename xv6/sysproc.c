@@ -26,6 +26,18 @@ sys_wait(void)
   return wait();
 }
 
+//HW2 Edit
+int
+sys_wait_stat(void)
+{
+  int *wtime, *rtime, *iotime, *status;
+  if (argptr(0, (void*)&wtime, sizeof(wtime)) < 0) return -1;
+  if (argptr(1, (void*)&rtime, sizeof(rtime)) < 0) return -1;
+  if (argptr(2, (void*)&iotime, sizeof(iotime)) < 0) return -1;
+  if (argptr(3, (void*)&status, sizeof(status)) < 0) return -1;
+  return wait_stat(wtime, rtime, iotime, status);
+}
+
 int
 sys_kill(void)
 {
@@ -61,7 +73,7 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
-  
+
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -83,7 +95,7 @@ int
 sys_uptime(void)
 {
   uint xticks;
-  
+
   acquire(&tickslock);
   xticks = ticks;
   release(&tickslock);

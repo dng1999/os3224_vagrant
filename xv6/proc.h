@@ -10,7 +10,7 @@ struct cpu {
   volatile uint started;       // Has the CPU started?
   int ncli;                    // Depth of pushcli nesting.
   int intena;                  // Were interrupts enabled before pushcli?
-  
+
   // Cpu-local storage variables; see below
   struct cpu *cpu;
   struct proc *proc;           // The currently-running process.
@@ -66,6 +66,15 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  //HW2 Edit
+  int ctime;		       // Creation time
+  int ttime;		       // Termination time
+  int stime;		       // SLEEPING time
+  int retime;		       // RUNNABLE/READY time
+  int rutime;		       // RUNNING time
+  int quantaCount;     // to count ticks for quanta
+  int order;           // for FIFO round robin - stores tick when proc became READY (not aggregated like retime)
+
 };
 
 // Process memory is laid out contiguously, low addresses first:

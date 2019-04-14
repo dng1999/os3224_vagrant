@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
+//HW2 Edit - why are you like this xv6
+#define NULL (void*)0
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -47,6 +50,15 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+
+  //HW2 Edit Start
+  p->ctime = ticks;
+  p->stime = 0; //has not sleeping
+  p->retime = 0; //has not ready
+  p->rutime = 0; //has not runnable
+  p->order = ticks;
+  //HW2 Edit End
+
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -55,11 +67,11 @@ found:
     return 0;
   }
   sp = p->kstack + KSTACKSIZE;
-  
+
   // Leave room for trap frame.
   sp -= sizeof *p->tf;
   p->tf = (struct trapframe*)sp;
-  
+
   // Set up new context to start executing at forkret,
   // which returns to trapret.
   sp -= 4;
@@ -80,7 +92,7 @@ userinit(void)
 {
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
-  
+
   p = allocproc();
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
@@ -100,6 +112,14 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+
+  //HW2 Edit Start
+  p->ctime = ticks;
+  p->stime = 0; //has not sleeping
+  p->retime = 0; //has not ready
+  p->rutime = 0; //has not runnable
+  p->order = ticks;
+  //HW2 Edit End
 }
 
 // Grow current process's memory by n bytes.
@@ -108,7 +128,7 @@ int
 growproc(int n)
 {
   uint sz;
-  
+
   sz = proc->sz;
   if(n > 0){
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
@@ -155,14 +175,14 @@ fork(void)
   np->cwd = idup(proc->cwd);
 
   safestrcpy(np->name, proc->name, sizeof(proc->name));
- 
+
   pid = np->pid;
 
   // lock to force the compiler to emit the np->state write last.
   acquire(&ptable.lock);
   np->state = RUNNABLE;
   release(&ptable.lock);
-  
+
   return pid;
 }
 
@@ -207,6 +227,9 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   proc->state = ZOMBIE;
+  //HW2 Edit Start
+  p->ttime = ticks;
+  //HW2 Edit End
   sched();
   panic("zombie exit");
 }
@@ -273,16 +296,42 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    #ifdef DEFAULT
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
+        // Switch to chosen process.  It is the process's job
+        // to release ptable.lock and then reacquire it
+        // before jumping back to us.
+        proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        p->quantaCount = 0; //HW2 Edit - Reset quanta Counter
+        swtch(&cpu->scheduler, proc->context);
+        switchkvm();
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        proc = 0;
+    }
+    #else
+    #ifdef FRR
+    struct proc *firstP = NULL;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state == RUNNABLE){
+        if(firstP == NULL || firstP->order > p->order) firstP = p;
+      }
+    }
+    if (firstP != NULL){
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      proc = p;
+      proc = firstP;
+      p = firstP;
       switchuvm(p);
       p->state = RUNNING;
+      p->quantaCount = 0; //HW2 Edit - Reset quanta Counter
       swtch(&cpu->scheduler, proc->context);
       switchkvm();
 
@@ -290,6 +339,33 @@ scheduler(void)
       // It should have changed its p->state before coming back.
       proc = 0;
     }
+    #else
+    #ifdef FCFS
+    struct proc *firstP = NULL;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state == RUNNABLE){
+        if(firstP == NULL || firstP->ctime > p->ctime) firstP = p;
+      }
+    }
+    if (firstP != NULL) {
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      proc = firstP;
+      p = firstP;
+      switchuvm(p);
+      p->state = RUNNING;
+      p->quantaCount = 0; //HW2 Edit - Reset quanta Counter
+      swtch(&cpu->scheduler, proc->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      proc = 0;
+    }
+    #endif
+    #endif
+    #endif
     release(&ptable.lock);
 
   }
@@ -321,6 +397,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   proc->state = RUNNABLE;
+  proc->order = ticks;
   sched();
   release(&ptable.lock);
 }
@@ -336,12 +413,12 @@ forkret(void)
 
   if (first) {
     // Some initialization functions must be run in the context
-    // of a regular process (e.g., they call sleep), and thus cannot 
+    // of a regular process (e.g., they call sleep), and thus cannot
     // be run from main().
     first = 0;
     initlog();
   }
-  
+
   // Return to "caller", actually trapret (see allocproc).
 }
 
@@ -393,6 +470,7 @@ wakeup1(void *chan)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
       p->state = RUNNABLE;
+      p->order = ticks;
 }
 
 // Wake up all processes sleeping on chan.
@@ -416,6 +494,7 @@ kill(int pid)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
       p->killed = 1;
+      p->ttime = ticks; //HW2 Edit
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
         p->state = RUNNABLE;
@@ -446,7 +525,7 @@ procdump(void)
   struct proc *p;
   char *state;
   uint pc[10];
-  
+
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->state == UNUSED)
       continue;
@@ -462,4 +541,74 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+//HW2 Edit
+// Extend wait system call
+// wtime: aggregated number of clock ticks during which the proc waited
+// rtime: aggregated number of clock ticks during process was running
+// iotime: aggregated number of clock ticks during which proc was waiting for I/O
+// status: return pid of terminated child proc or -1 upon failure
+int wait_stat(int *wtime, int *rtime, int *iotime, int *status){
+  struct proc *p;
+  int havekids, pid;
+
+  acquire(&ptable.lock);
+  for(;;){
+    // Scan through table looking for zombie children.
+    havekids = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent != proc)
+        continue;
+      havekids = 1;
+      if(p->state == ZOMBIE){
+        // Found one.
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->state = UNUSED;
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+
+        //HW2 Edit Start
+        *wtime = p->retime;
+        *rtime = p->rutime;
+        *iotime = p->stime;
+        //HW2 Edit End
+        release(&ptable.lock);
+        *status = pid;
+        return *status;
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || proc->killed){
+      release(&ptable.lock);
+      *status = -1;
+      return *status;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(proc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+// HW2 Edit
+// update ticks
+void updateTick(void) {
+  struct proc *p;
+  
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if (p->state == SLEEPING) p->stime++;
+    else if (p->state == RUNNING) {
+      p->rutime++;
+      p->quantaCount++;
+    }
+    else if (p->state == RUNNABLE) p->retime++;
+  }
+  release(&ptable.lock);
 }
